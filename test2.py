@@ -2,7 +2,7 @@
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-from langchain_community.vectorstores import Chroma  # Fixed import
+from langchain_community.vectorstores import FAISS  # Changed from Chroma to FAISS
 from langchain.chains import ConversationalRetrievalChain
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.prompts import ChatPromptTemplate
@@ -101,7 +101,7 @@ def get_embedding_function():
         st.error(f"Error creating embedding function: {str(e)}")
         return None
 
-# Creating the vectorstore (Chroma) to organize the data
+# Creating the vectorstore (FAISS) to organize the data
 def create_vectorstore(chunks, embedding_function):
     try:
         # Generate unique IDs for each document based on content
@@ -115,11 +115,10 @@ def create_vectorstore(chunks, embedding_function):
                 unique_ids.add(id)
                 unique_chunks.append(chunk)
 
-        # Create a new Chroma database from the unique documents (in-memory)
-        vectorstore = Chroma.from_documents(
+        # Create a new FAISS database from the unique documents (in-memory)
+        vectorstore = FAISS.from_documents(
             documents=unique_chunks,
-            embedding=embedding_function,
-            # Remove persist_directory to use in-memory storage
+            embedding=embedding_function
         )
 
         return vectorstore

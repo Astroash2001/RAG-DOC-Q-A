@@ -1,8 +1,18 @@
-streamlit
-langchain
-langchain-community
-langchain-openai
-openai
-chromadb
-pypdf
-pandas
+streamlit>=1.28.0
+langchain>=0.1.0
+langchain-community>=0.0.10
+langchain-openai>=0.0.5
+langchain-core>=0.1.0
+faiss-cpu>=1.7.4
+pypdf>=3.17.0
+openai>=1.12.0
+tiktoken>=0.5.0
+pandas>=1.5.0
+numpy>=1.24.0
+protobuf>=3.20.0,<5.0.0
+pydantic>=1.10.0,<3.0.0
+
+# Force use of pre-built wheels
+--only-binary=tiktoken
+--only-binary=numpy
+--only-binary=faiss-cpu
