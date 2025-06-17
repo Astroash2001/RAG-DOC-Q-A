@@ -2,24 +2,22 @@
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-from langchain.vectorstores import Chroma
+from langchain_community.vectorstores import Chroma  # Fixed import
 from langchain.chains import ConversationalRetrievalChain
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.pydantic_v1 import BaseModel, Field
 from langchain_core.output_parsers import StrOutputParser
 
 # Other modules and packages
-
+import os  # Added missing import
 import uuid
 import tempfile
 import streamlit as st
 import pandas as pd
 import shutil
 
-# Load environment variables
-
-OPENAI_API_KEY = st.secrets("OPENAI_API_KEY")
+# Load environment variables - Fixed the secrets access
+OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]  # Fixed: use square brackets
 
 # Initialize Streamlit interface
 st.set_page_config(
@@ -31,29 +29,38 @@ st.set_page_config(
 st.title("📚 RAG Document Q&A System")
 st.write("Upload a PDF document and ask questions about its content.")
 
+# Check API key first
+if not OPENAI_API_KEY:
+    st.error("Please set your OpenAI API key in Streamlit secrets")
+    st.stop()
+
 # Sidebar for settings
 with st.sidebar:
     st.header("Settings")
     chunk_size = st.slider("Chunk Size", 500, 2000, 1000, step=100)
     chunk_overlap = st.slider("Chunk Overlap", 50, 500, 200, step=50)
     num_chunks = st.slider("Number of Chunks to Retrieve", 1, 10, 4, step=1)
-    
-    if not OPENAI_API_KEY:
-        st.error("Please set your OpenAI API key in the .env file")
-        st.stop()
 
 # Initialize LLM (Large Language Model)
-try:
-    llm = ChatOpenAI(
-        model="gpt-4-turbo-preview",
-        temperature=0.7,
-        max_tokens=1000
-    )
-except Exception as e:
-    st.error(f"Error initializing LLM: {str(e)}")
+@st.cache_resource
+def get_llm():
+    try:
+        return ChatOpenAI(
+            model="gpt-4-turbo-preview",
+            temperature=0.7,
+            max_tokens=1000,
+            openai_api_key=OPENAI_API_KEY
+        )
+    except Exception as e:
+        st.error(f"Error initializing LLM: {str(e)}")
+        return None
+
+llm = get_llm()
+if llm is None:
     st.stop()
 
 # Create embedding function
+@st.cache_resource
 def get_embedding_function():
     try:
         embeddings = OpenAIEmbeddings(
@@ -66,7 +73,7 @@ def get_embedding_function():
         return None
 
 # Creating the vectorstore (Chroma) to organize the data
-def create_vectorstore(chunks, embedding_function, vectorstore_path):
+def create_vectorstore(chunks, embedding_function):
     try:
         # Generate unique IDs for each document based on content
         ids = [str(uuid.uuid5(uuid.NAMESPACE_DNS, doc.page_content)) for doc in chunks]
@@ -79,15 +86,13 @@ def create_vectorstore(chunks, embedding_function, vectorstore_path):
                 unique_ids.add(id)
                 unique_chunks.append(chunk)
 
-        # Create a new Chroma database from the unique documents
+        # Create a new Chroma database from the unique documents (in-memory)
         vectorstore = Chroma.from_documents(
             documents=unique_chunks,
             embedding=embedding_function,
-            persist_directory=vectorstore_path
+            # Remove persist_directory to use in-memory storage
         )
 
-        # Persist the vectorstore to disk
-        vectorstore.persist()
         return vectorstore
     except Exception as e:
         st.error(f"Error creating vectorstore: {str(e)}")
@@ -122,14 +127,8 @@ def process_document(uploaded_file, chunk_size, chunk_overlap):
         if embedding_function is None:
             return None
 
-        # Create vectorstore path based on file name
-        vectorstore_path = f"vectorstore_{uploaded_file.name.replace('.pdf', '')}"
-        if os.path.exists(vectorstore_path):
-            shutil.rmtree(vectorstore_path)
-        os.makedirs(vectorstore_path)
-
-        # Create and load vectorstore
-        vectorstore = create_vectorstore(chunks, embedding_function, vectorstore_path)
+        # Create vectorstore (in-memory)
+        vectorstore = create_vectorstore(chunks, embedding_function)
         if vectorstore is None:
             return None
 
@@ -147,23 +146,6 @@ def process_document(uploaded_file, chunk_size, chunk_overlap):
         st.error(f"Error processing document: {str(e)}")
         return None
 
-# Prompt template
-PROMPT_TEMPLATE = """
-You are an assistant for question-answering tasks. Use the following 
-pieces of retrieved context to answer the question. If you don't know the 
-answer, say that you don't know. Don't make up anything.
-
-Context:
-{context}
-
-Question: {question}
-
-Please provide a clear and concise answer based on the context above.
-"""
-
-# Create prompt template
-prompt_template = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
-
 # Create RAG chain
 def create_rag_chain(retriever):
     """Create a RAG chain for question answering."""
@@ -171,6 +153,9 @@ def create_rag_chain(retriever):
     {context}
     
     Question: {question}
+    
+    Please provide a clear and concise answer based on the context above.
+    If you don't know the answer based on the context, say that you don't know.
     """
     prompt = ChatPromptTemplate.from_template(template)
     
@@ -195,6 +180,7 @@ if uploaded_file is not None:
         retriever = process_document(uploaded_file, chunk_size, chunk_overlap)
     
     if retriever is not None:
+        st.success("Document processed successfully!")
         rag_chain = create_rag_chain(retriever)
         
         # Question input
@@ -219,4 +205,5 @@ if uploaded_file is not None:
                             st.write("---")
                 except Exception as e:
                     st.error(f"Error generating answer: {str(e)}")
-
+    else:
+        st.error("Failed to process the document. Please try again.")
