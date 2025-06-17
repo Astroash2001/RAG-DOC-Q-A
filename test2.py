@@ -16,9 +16,6 @@ import streamlit as st
 import pandas as pd
 import shutil
 
-# Load environment variables - Fixed the secrets access
-OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]  # Fixed: use square brackets
-
 # Initialize Streamlit interface
 st.set_page_config(
     page_title="RAG Document Q&A System",
@@ -29,14 +26,46 @@ st.set_page_config(
 st.title("📚 RAG Document Q&A System")
 st.write("Upload a PDF document and ask questions about its content.")
 
-# Check API key first
-if not OPENAI_API_KEY:
-    st.error("Please set your OpenAI API key in Streamlit secrets")
+# Load environment variables - Try multiple sources
+OPENAI_API_KEY = None
+
+# Try to get API key from different sources
+try:
+    # First try Streamlit secrets
+    OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
+except (KeyError, FileNotFoundError):
+    try:
+        # Then try environment variables
+        import os
+        OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+    except:
+        pass
+
+if not OPENAI_API_KEY or OPENAI_API_KEY.strip() == "":
+    st.error("❌ OpenAI API key not found!")
+    st.info("📝 Please set your OpenAI API key in one of these ways:")
+    
+    with st.expander("🔧 Setup Instructions"):
+        st.markdown("""
+        **Option 1: Streamlit Cloud Secrets**
+        1. Go to your app dashboard
+        2. Click on the three dots menu (⋮)
+        3. Select 'Settings'
+        4. Go to 'Secrets' tab
+        5. Add: `OPENAI_API_KEY = "your-api-key-here"`
+        
+        **Option 2: Local .streamlit/secrets.toml file**
+        Create a file `.streamlit/secrets.toml` in your project with:
+        ```toml
+        OPENAI_API_KEY = "your-api-key-here"
+        ```
+        """)
     st.stop()
 
 # Sidebar for settings
 with st.sidebar:
-    st.header("Settings")
+    st.header("⚙️ Settings")
+    st.success("✅ API Key Configured")
     chunk_size = st.slider("Chunk Size", 500, 2000, 1000, step=100)
     chunk_overlap = st.slider("Chunk Overlap", 50, 500, 200, step=50)
     num_chunks = st.slider("Number of Chunks to Retrieve", 1, 10, 4, step=1)
