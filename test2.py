@@ -10,17 +10,16 @@ from langchain_core.pydantic_v1 import BaseModel, Field
 from langchain_core.output_parsers import StrOutputParser
 
 # Other modules and packages
-import os
+
 import uuid
 import tempfile
 import streamlit as st
 import pandas as pd
-from dotenv import load_dotenv
 import shutil
 
 # Load environment variables
-load_dotenv()
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+OPENAI_API_KEY = st.secrets("OPENAI_API_KEY")
 
 # Initialize Streamlit interface
 st.set_page_config(
