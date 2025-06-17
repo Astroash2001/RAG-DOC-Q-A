@@ -9,3 +9,4 @@ python-dotenv
 pypdf
 numpy
 pandas
+tiktoken==0.5.1
