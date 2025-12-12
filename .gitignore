@@ -24,6 +24,7 @@ wheels/
 venv/
 ENV/
 env/
+.venv/
 
 # IDE
 .idea/
@@ -33,6 +34,7 @@ env/
 
 # Environment variables
 .env
+.streamlit/secrets.toml
 
 # Vectorstore
 vectorstore_*/

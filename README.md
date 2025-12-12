@@ -29,7 +29,14 @@ cd <repository-name>
 
 ```bash
 python -m venv venv
-venv\Scripts\activate  # On Windows
+venv\Scripts\activate  # On Windows (Command Prompt / PowerShell)
+
+# Windows (Git Bash) users:
+# Either activate with:
+#   source venv/Scripts/activate
+# or run Python directly from the venv without activating:
+#   ./venv/Scripts/python.exe -m pip install -r requirements.txt
+#   ./venv/Scripts/python.exe -m streamlit run test2.py
 ```
 
 3. Install dependencies:
@@ -50,6 +57,25 @@ OPENAI_API_KEY=your_api_key_here
 
 ```bash
 streamlit run test2.py
+```
+
+Windows (Git Bash) quick start (no activation required):
+
+```bash
+# Install dependencies using the project venv
+./.venv/Scripts/python.exe -m pip install -r requirements.txt
+
+# Provide your OpenAI API key (or use Streamlit secrets)
+export OPENAI_API_KEY="your_api_key_here"
+
+# Run the app via the venv's Python
+./.venv/Scripts/python.exe -m streamlit run test2.py
+```
+
+One-shot setup with Streamlit secrets (recommended):
+
+```bash
+mkdir -p .streamlit && echo 'OPENAI_API_KEY = "your_api_key_here"' > .streamlit/secrets.toml && ./.venv/Scripts/python.exe -m streamlit run test2.py
 ```
 
 2. Open your web browser and navigate to the provided URL (usually http://localhost:8501)

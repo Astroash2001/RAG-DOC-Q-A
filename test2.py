@@ -1,9 +1,9 @@
 # Necessary Langchain modules
 from langchain_community.document_loaders import PyPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_openai import ChatOpenAI
+from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS  # Changed from Chroma to FAISS
-from langchain.chains import ConversationalRetrievalChain
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
@@ -26,19 +26,28 @@ st.set_page_config(
 st.title("📚 RAG Document Q&A System")
 st.write("Upload a PDF document and ask questions about its content.")
 
+"""RAG Document Q&A System (Streamlit)
+This app loads an OpenAI API key from Streamlit secrets
+or from the environment. It shows a clear message if no key is found.
+"""
+
 # Load environment variables - Try multiple sources
 OPENAI_API_KEY = None
+KEY_SOURCE = None
 
 # Try to get API key from different sources
 try:
     # First try Streamlit secrets
     OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
+    KEY_SOURCE = "secrets"
 except (KeyError, FileNotFoundError):
     try:
         # Then try environment variables
         import os
         OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-    except:
+        if OPENAI_API_KEY:
+            KEY_SOURCE = "env"
+    except Exception:
         pass
 
 if not OPENAI_API_KEY or OPENAI_API_KEY.strip() == "":
@@ -65,7 +74,11 @@ if not OPENAI_API_KEY or OPENAI_API_KEY.strip() == "":
 # Sidebar for settings
 with st.sidebar:
     st.header("⚙️ Settings")
-    st.success("✅ API Key Configured")
+    if OPENAI_API_KEY:
+        source_label = "Streamlit secrets" if KEY_SOURCE == "secrets" else "Environment variable"
+        st.success(f"✅ API Key Configured ({source_label})")
+    else:
+        st.error("❌ API Key missing")
     chunk_size = st.slider("Chunk Size", 500, 2000, 1000, step=100)
     chunk_overlap = st.slider("Chunk Overlap", 50, 500, 200, step=50)
     num_chunks = st.slider("Number of Chunks to Retrieve", 1, 10, 4, step=1)
@@ -92,11 +105,8 @@ if llm is None:
 @st.cache_resource
 def get_embedding_function():
     try:
-        embeddings = OpenAIEmbeddings(
-            model="text-embedding-ada-002", 
-            openai_api_key=OPENAI_API_KEY
-        )
-        return embeddings
+        # Use local embeddings to avoid OpenAI quota and reduce cost
+        return HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
     except Exception as e:
         st.error(f"Error creating embedding function: {str(e)}")
         return None
@@ -190,7 +200,7 @@ def create_rag_chain(retriever):
     # Create the chain
     chain = (
         {
-            "context": lambda x: format_docs(retriever.get_relevant_documents(x["question"])),
+            "context": lambda x: format_docs(retriever.invoke(x["question"])),
             "question": lambda x: x["question"]
         }
         | prompt
@@ -226,12 +236,36 @@ if uploaded_file is not None:
                     
                     # Show retrieved chunks
                     with st.expander("Show Retrieved Context"):
-                        relevant_chunks = retriever.get_relevant_documents(question)
+                        relevant_chunks = retriever.invoke(question)
                         for i, chunk in enumerate(relevant_chunks, 1):
                             st.write(f"#### Chunk {i}")
                             st.write(chunk.page_content)
                             st.write("---")
                 except Exception as e:
-                    st.error(f"Error generating answer: {str(e)}")
+                    # Fallback: avoid LLM quota errors by returning context directly
+                    err_text = str(e)
+                    st.warning("LLM call failed. Showing context-based fallback.")
+                    with st.expander("Error Details"):
+                        st.code(err_text)
+
+                    # Retrieve context directly and provide a simple extractive summary
+                    try:
+                        relevant_chunks = retriever.invoke(question)
+                        st.write("### Context-Based Answer (no LLM)")
+                        # Simple heuristic: show the most relevant chunk and a short snippet
+                        if len(relevant_chunks) > 0:
+                            top = relevant_chunks[0].page_content
+                            snippet = top[:800]
+                            st.write(snippet)
+                        else:
+                            st.info("No relevant context found.")
+
+                        with st.expander("Show Retrieved Context"):
+                            for i, chunk in enumerate(relevant_chunks, 1):
+                                st.write(f"#### Chunk {i}")
+                                st.write(chunk.page_content)
+                                st.write("---")
+                    except Exception as e2:
+                        st.error(f"Fallback also failed: {str(e2)}")
     else:
         st.error("Failed to process the document. Please try again.")
