@@ -3,18 +3,16 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_openai import ChatOpenAI
 from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import FAISS  # Changed from Chroma to FAISS
-from langchain_core.runnables import RunnablePassthrough
+from langchain_community.vectorstores import FAISS
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
 # Other modules and packages
-import os  # Added missing import
+import os
 import uuid
 import tempfile
 import streamlit as st
-import pandas as pd
-import shutil
+from transformers import pipeline
 
 # Initialize Streamlit interface
 st.set_page_config(
@@ -43,7 +41,6 @@ try:
 except (KeyError, FileNotFoundError):
     try:
         # Then try environment variables
-        import os
         OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
         if OPENAI_API_KEY:
             KEY_SOURCE = "env"
@@ -68,6 +65,9 @@ if not OPENAI_API_KEY or OPENAI_API_KEY.strip() == "":
         ```toml
         OPENAI_API_KEY = "your-api-key-here"
         ```
+        
+        **Get your API key from:**
+        https://platform.openai.com/api-keys
         """)
     st.stop()
 
@@ -76,30 +76,50 @@ with st.sidebar:
     st.header("⚙️ Settings")
     if OPENAI_API_KEY:
         source_label = "Streamlit secrets" if KEY_SOURCE == "secrets" else "Environment variable"
-        st.success(f"✅ API Key Configured ({source_label})")
+        st.success(f"✅ OpenAI API Key Configured ({source_label})")
     else:
-        st.error("❌ API Key missing")
+        st.warning("Using local LLM fallback (no OpenAI key)")
     chunk_size = st.slider("Chunk Size", 500, 2000, 1000, step=100)
     chunk_overlap = st.slider("Chunk Overlap", 50, 500, 200, step=50)
     num_chunks = st.slider("Number of Chunks to Retrieve", 1, 10, 4, step=1)
+    default_provider = "OpenAI" if OPENAI_API_KEY else "Local (FLAN-T5)"
+    model_provider = st.selectbox("LLM Provider", ["OpenAI", "Local (FLAN-T5)"], index=0 if default_provider=="OpenAI" else 1)
 
 # Initialize LLM (Large Language Model)
 @st.cache_resource
-def get_llm():
+def get_openai_llm():
     try:
         return ChatOpenAI(
-            model="gpt-4-turbo-preview",
+            model="gpt-4o-mini",
             temperature=0.7,
             max_tokens=1000,
-            openai_api_key=OPENAI_API_KEY
+            api_key=OPENAI_API_KEY
         )
     except Exception as e:
-        st.error(f"Error initializing LLM: {str(e)}")
+        st.error(f"Error initializing OpenAI LLM: {str(e)}")
         return None
 
-llm = get_llm()
-if llm is None:
-    st.stop()
+@st.cache_resource
+def get_local_llm():
+    try:
+        return pipeline("text2text-generation", model="google/flan-t5-base")
+    except Exception as e:
+        st.error(f"Error initializing local LLM: {str(e)}")
+        return None
+
+llm = None
+local_llm = None
+if model_provider == "OpenAI":
+    llm = get_openai_llm()
+    if llm is None:
+        st.info("Switching to local LLM fallback.")
+        local_llm = get_local_llm()
+        model_provider = "Local (FLAN-T5)"
+else:
+    local_llm = get_local_llm()
+    if local_llm is None:
+        st.error("Local LLM unavailable. Please install transformers/torch or provide OPENAI_API_KEY.")
+        st.stop()
 
 # Create embedding function
 @st.cache_resource
@@ -186,7 +206,7 @@ def process_document(uploaded_file, chunk_size, chunk_overlap):
 
 # Create RAG chain
 def create_rag_chain(retriever):
-    """Create a RAG chain for question answering."""
+    """Create a RAG chain for question answering using OpenAI."""
     template = """Answer the question based on the following context:
     {context}
     
@@ -196,8 +216,6 @@ def create_rag_chain(retriever):
     If you don't know the answer based on the context, say that you don't know.
     """
     prompt = ChatPromptTemplate.from_template(template)
-    
-    # Create the chain
     chain = (
         {
             "context": lambda x: format_docs(retriever.invoke(x["question"])),
@@ -207,7 +225,6 @@ def create_rag_chain(retriever):
         | llm
         | StrOutputParser()
     )
-    
     return chain
 
 # Main Streamlit interface
@@ -219,22 +236,32 @@ if uploaded_file is not None:
     
     if retriever is not None:
         st.success("Document processed successfully!")
-        rag_chain = create_rag_chain(retriever)
+        rag_chain = None
+        if model_provider == "OpenAI" and llm is not None:
+            rag_chain = create_rag_chain(retriever)
         
-        # Question input
         question = st.text_input("Ask a question about the document:", key="question_input")
         
         if question:
             with st.spinner("Generating answer..."):
                 try:
-                    # Create input dictionary for the chain
-                    input_dict = {"question": question}
-                    # Get response from the chain
-                    response = rag_chain.invoke(input_dict)
-                    st.write("### Answer")
-                    st.write(response)
-                    
-                    # Show retrieved chunks
+                    if model_provider == "OpenAI" and rag_chain is not None:
+                        input_dict = {"question": question}
+                        response = rag_chain.invoke(input_dict)
+                        st.write("### Answer (OpenAI)")
+                        st.write(response)
+                    else:
+                        context_txt = format_docs(retriever.invoke(question))
+                        prompt = (
+                            "Using only the context below, answer the question.\n"
+                            + "Context:\n" + context_txt + "\n\n"
+                            + "Question: " + question + "\nAnswer:"
+                        )
+                        gen = local_llm(prompt, max_new_tokens=256)
+                        response = gen[0]["generated_text"] if isinstance(gen, list) and len(gen) > 0 else ""
+                        st.write("### Answer (Local LLM)")
+                        st.write(response)
+
                     with st.expander("Show Retrieved Context"):
                         relevant_chunks = retriever.invoke(question)
                         for i, chunk in enumerate(relevant_chunks, 1):
@@ -242,30 +269,42 @@ if uploaded_file is not None:
                             st.write(chunk.page_content)
                             st.write("---")
                 except Exception as e:
-                    # Fallback: avoid LLM quota errors by returning context directly
                     err_text = str(e)
-                    st.warning("LLM call failed. Showing context-based fallback.")
-                    with st.expander("Error Details"):
-                        st.code(err_text)
+                    # If OpenAI rate limit error, try local fallback automatically
+                    if "quota" in err_text.lower() or "429" in err_text or "rate limit" in err_text.lower():
+                        st.info("OpenAI rate limit error. Switching to local LLM.")
+                        try:
+                            context_txt = format_docs(retriever.invoke(question))
+                            prompt = (
+                                "Using only the context below, answer the question.\n"
+                                + "Context:\n" + context_txt + "\n\n"
+                                + "Question: " + question + "\nAnswer:"
+                            )
+                            gen = local_llm(prompt, max_new_tokens=256)
+                            response = gen[0]["generated_text"] if isinstance(gen, list) and len(gen) > 0 else ""
+                            st.write("### Answer (Local LLM)")
+                            st.write(response)
 
-                    # Retrieve context directly and provide a simple extractive summary
-                    try:
-                        relevant_chunks = retriever.invoke(question)
-                        st.write("### Context-Based Answer (no LLM)")
-                        # Simple heuristic: show the most relevant chunk and a short snippet
-                        if len(relevant_chunks) > 0:
-                            top = relevant_chunks[0].page_content
-                            snippet = top[:800]
-                            st.write(snippet)
-                        else:
-                            st.info("No relevant context found.")
-
-                        with st.expander("Show Retrieved Context"):
-                            for i, chunk in enumerate(relevant_chunks, 1):
-                                st.write(f"#### Chunk {i}")
-                                st.write(chunk.page_content)
-                                st.write("---")
-                    except Exception as e2:
-                        st.error(f"Fallback also failed: {str(e2)}")
+                            with st.expander("Show Retrieved Context"):
+                                relevant_chunks = retriever.invoke(question)
+                                for i, chunk in enumerate(relevant_chunks, 1):
+                                    st.write(f"#### Chunk {i}")
+                                    st.write(chunk.page_content)
+                                    st.write("---")
+                        except Exception as e2:
+                            st.warning("Local LLM fallback failed. Showing context snippet.")
+                            with st.expander("Error Details"):
+                                st.code(f"OpenAI error: {err_text}\nLocal error: {str(e2)}")
+                            try:
+                                relevant_chunks = retriever.invoke(question)
+                                st.write("### Context-Based Answer (no LLM)")
+                                if len(relevant_chunks) > 0:
+                                    top = relevant_chunks[0].page_content
+                                    snippet = top[:800]
+                                    st.write(snippet)
+                                else:
+                                    st.info("No relevant context found.")
+                            except Exception as e3:
+                                st.error(f"Fallback also failed: {str(e3)}")
     else:
         st.error("Failed to process the document. Please try again.")

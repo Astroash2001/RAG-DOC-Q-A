@@ -82,6 +82,20 @@ mkdir -p .streamlit && echo 'OPENAI_API_KEY = "your_api_key_here"' > .streamlit/
 
 3. Upload a PDF document and ask questions about its content
 
+### Run without OpenAI (Local mode)
+
+If you see an OpenAI quota error (HTTP 429) or don't have an API key, you can run the app with a local LLM fallback:
+
+```bash
+# Install local LLM dependencies (CPU)
+pip install transformers torch
+
+# Start the app
+streamlit run test2.py
+```
+
+In the sidebar, set "LLM Provider" to "Local (FLAN-T5)". The app will also auto-switch to local mode if an OpenAI quota error occurs.
+
 ## Project Structure
 
 - `test2.py`: Main application file
